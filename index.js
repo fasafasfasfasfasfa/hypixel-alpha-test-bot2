@@ -1,3 +1,5 @@
+console.log("TOKEN exists:", !!process.env.TOKEN);
+console.log("TOKEN length:", process.env.TOKEN?.length);
 const { Client, GatewayIntentBits } = require('discord.js');
 const axios = require('axios');
 const cheerio = require('cheerio');
