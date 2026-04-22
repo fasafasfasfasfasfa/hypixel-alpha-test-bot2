@@ -1,5 +1,3 @@
-console.log("TOKEN exists:", !!process.env.TOKEN);
-console.log("TOKEN length:", process.env.TOKEN?.length);
 const { Client, GatewayIntentBits } = require('discord.js');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -12,44 +10,71 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-let lastLink = null;
+let seenLinks = new Set();
 
-if (fs.existsSync('last.json')) {
-  lastLink = JSON.parse(fs.readFileSync('last.json')).link;
+// load old data
+if (fs.existsSync('data.json')) {
+  const saved = JSON.parse(fs.readFileSync('data.json', 'utf8'));
+  seenLinks = new Set(saved.seenLinks || []);
+}
+
+async function fetchAllPosts() {
+  const { data } = await axios.get('https://hypixel.net/skyblock-alpha/');
+  const $ = cheerio.load(data);
+
+  const links = [];
+
+  $('a').each((i, el) => {
+    const href = $(el).attr('href');
+
+    if (href && href.includes('/threads/')) {
+      const fullLink = href.startsWith('http')
+        ? href
+        : `https://hypixel.net${href}`;
+
+      links.push(fullLink);
+    }
+  });
+
+  // remove duplicates
+  return [...new Set(links)];
 }
 
 async function checkAlphaUpdates() {
   try {
-    const { data } = await axios.get('https://hypixel.net/skyblock-alpha/');
-    const $ = cheerio.load(data);
+    const channel = await client.channels.fetch(CHANNEL_ID);
+    const links = await fetchAllPosts();
 
-    const post = $('a').filter((i, el) =>
-      $(el).attr('href')?.includes('/threads/')
-    ).first();
+    // newest first
+    const newLinks = links.filter(link => !seenLinks.has(link));
 
-    if (!post) return;
+    if (newLinks.length === 0) return;
 
-    const link = post.attr('href');
-    const fullLink = link.startsWith('http')
-      ? link
-      : `https://hypixel.net${link}`;
+    // send oldest first so it reads naturally
+    newLinks.reverse();
 
-    if (fullLink !== lastLink) {
-      lastLink = fullLink;
-      fs.writeFileSync('last.json', JSON.stringify({ link: fullLink }));
-
-      const channel = await client.channels.fetch(CHANNEL_ID);
-      await channel.send(`🧪 New SkyBlock Alpha Update:\n${fullLink}`);
+    for (const link of newLinks) {
+      await channel.send(`🧪 SkyBlock Alpha Update:\n${link}`);
+      seenLinks.add(link);
     }
+
+    fs.writeFileSync(
+      'data.json',
+      JSON.stringify({ seenLinks: [...seenLinks] }, null, 2)
+    );
 
   } catch (err) {
     console.error(err);
   }
 }
 
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
-  setInterval(checkAlphaUpdates, 300000); // 5 minutes
+
+  // 🔥 send all missed posts on startup
+  await checkAlphaUpdates();
+
+  setInterval(checkAlphaUpdates, 300000); // 5 min
 });
 
 client.login(TOKEN);
